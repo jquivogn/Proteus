@@ -1,149 +1,21 @@
 """
 =============================================================================
-Stochastic Metamorphic Cipher (SMC) - Core Implementation  v1.0
+Proteus-SMC — core/cipher.py
 =============================================================================
-Architecture : Réseau de Feistel à rondes variables et stochastiques
-Moteur       : PRNG déterministe (XorShift128+) synchronisé par graine
-Stochastie   : Sélection probabiliste des primitives + bruit temporel neutre
+Implémentation du réseau de Feistel et gestion des cycles de mutation.
 =============================================================================
 """
 
 import hashlib
-import struct
 import secrets
-from typing import Callable, List, Tuple
+import struct
 from dataclasses import dataclass
+from typing import Tuple
 
+from ..engine import DeterministicPRNG
+from ..primitives import PRIMITIVES, N_PRIM
+from ..stochastic import NOISE_OPS, N_NOISE
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ÉTAPE 1 : MOTEUR DE SYNCHRONISATION DÉTERMINISTE
-# ─────────────────────────────────────────────────────────────────────────────
-
-class DeterministicPRNG:
-    """
-    PRNG XorShift128+ initialisé par une graine dérivée via PBKDF2-SHA256.
-    Période : 2^128 - 1.  Synchronisé entre émetteur et récepteur.
-    """
-
-    def __init__(self, seed: bytes, session_id: bytes = b""):
-        material = hashlib.pbkdf2_hmac(
-            'sha256', seed, session_id + b"smc-prng", iterations=100, dklen=32
-        )
-        s = list(struct.unpack(">4Q", material))
-        self._s = [x if x != 0 else 0xDEADBEEFCAFEBABE for x in s]
-
-    def next_u64(self) -> int:
-        s = self._s
-        s0, s1 = s[0], s[1]
-        result = (s0 + s1) & 0xFFFFFFFFFFFFFFFF
-        s1 ^= s0
-        s[0] = (((s0 << 55) | (s0 >> 9)) ^ s1 ^ (s1 << 14)) & 0xFFFFFFFFFFFFFFFF
-        s[1] = ((s1 << 36) | (s1 >> 28)) & 0xFFFFFFFFFFFFFFFF
-        return result
-
-    def next_float(self) -> float:
-        return (self.next_u64() >> 11) / (2**53)
-
-    def choice(self, n: int) -> int:
-        threshold = (1 << 64) - ((1 << 64) % n)
-        while True:
-            v = self.next_u64()
-            if v < threshold:
-                return v % n
-
-    def bernoulli(self, p: float) -> bool:
-        return self.next_float() < p
-
-    def shuffle(self, lst: list) -> list:
-        r = list(lst)
-        for i in range(len(r) - 1, 0, -1):
-            j = self.choice(i + 1)
-            r[i], r[j] = r[j], r[i]
-        return r
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ÉTAPE 2 : BIBLIOTHÈQUE DE PRIMITIVES ("GÈNES")
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _xor(b: int, k: int) -> int:
-    return b ^ k
-
-def _add(b: int, k: int) -> int:
-    return (b + k) & 0xFF
-
-def _sub(b: int, k: int) -> int:
-    return (b - k) & 0xFF
-
-def _mul(b: int, k: int) -> int:
-    return (b * (k | 1)) & 0xFF          # k forcé impair → bijectif mod 256
-
-def _rol(b: int, k: int) -> int:
-    r = k & 7
-    return b if r == 0 else ((b << r) | (b >> (8 - r))) & 0xFF
-
-def _ror(b: int, k: int) -> int:
-    r = k & 7
-    return b if r == 0 else ((b >> r) | (b << (8 - r))) & 0xFF
-
-def _bit_swap(b: int, k: int) -> int:
-    if k & 1:
-        b = ((b & 0x0F) << 4) | ((b >> 4) & 0x0F)
-    if k & 2:
-        b = int(f"{b:08b}"[::-1], 2)
-    return b & 0xFF
-
-def _sbox(b: int, k: int) -> int:
-    m = hashlib.md5(struct.pack("B", k)).digest()
-    return (m[b & 0x0F] ^ m[(b >> 4) & 0x0F] ^ k) & 0xFF
-
-def _fmix(b: int, k: int) -> int:
-    x = ((b & 0x0F) << 4) | ((b >> 4) & 0x0F)
-    return ((x ^ k) * 0x9E ^ ((x ^ k) >> 3)) & 0xFF
-
-PRIMITIVES: List[Tuple[str, Callable]] = [
-    ("XOR",   _xor),
-    ("ADD",   _add),
-    ("SUB",   _sub),
-    ("MUL",   _mul),
-    ("ROL",   _rol),
-    ("ROR",   _ror),
-    ("BSWAP", _bit_swap),
-    ("SBOX",  _sbox),
-    ("FMIX",  _fmix),
-]
-N_PRIM = len(PRIMITIVES)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ÉTAPE 4 : COUCHE STOCHASTIQUE — OPÉRATIONS DE BRUIT NEUTRES
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _noise_fadd(b: int, k: int) -> int:
-    return ((b + k) - k) & 0xFF
-
-def _noise_frot(b: int, k: int) -> int:
-    r = k & 7
-    return b if r == 0 else (((b << r) | (b >> (8 - r))) >> r | ((b << r) | (b >> (8 - r))) << (8 - r)) & 0xFF
-
-def _noise_dxor(b: int, k: int) -> int:
-    return b ^ k ^ k   # identité
-
-def _noise_noop(b: int, k: int) -> int:
-    return b
-
-NOISE_OPS: List[Tuple[str, Callable]] = [
-    ("FADD", _noise_fadd),
-    ("FROT", _noise_frot),
-    ("DXOR", _noise_dxor),
-    ("NOOP", _noise_noop),
-]
-N_NOISE = len(NOISE_OPS)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ÉTAPE 3 : CONFIGURATION ET CŒUR FEISTEL
-# ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class SMCConfig:

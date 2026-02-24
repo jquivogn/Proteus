@@ -20,10 +20,14 @@ import os
 import statistics
 import struct
 import sys
+from pathlib import Path
 from typing import List
 
-from smc_core import (N_PRIM, PRIMITIVES, DeterministicPRNG, SMCCipher,
-                      SMCConfig)
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from proteus_smc.engine import DeterministicPRNG
+from proteus_smc.primitives import PRIMITIVES, N_PRIM
+from proteus_smc.core import SMCCipher, SMCConfig
 
 # ─── Couleurs ANSI ──────────────────────────────────────────────────────────
 GREEN  = "\033[92m"

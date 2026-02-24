@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proteus-smc"
+version = "1.0.0"
+description = "Stochastic Metamorphic Cipher — prototype de recherche cryptographique"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+client = ["cryptography>=41.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
