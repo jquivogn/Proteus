@@ -130,8 +130,9 @@ def test_avalanche():
     plaintext = b"SMC_TEST_BLOCK_!!"  # 16 octets
     ct_ref = cipher.encrypt(plaintext)
     # Isole uniquement les blocs de données (après header)
-    # header = 3+1+4+4+16+4 = 32 octets
-    ct_data_offset = 8 + 4 + 16 + 4  # magic+ver+nblks + checksum + IV + round_meta(2blks)
+    # header(8) + mac(16) + iv(16) + round_meta(2×n_blks)
+    n_blks = len(plaintext) // cipher.BS
+    ct_data_offset = 8 + 16 + 16 + n_blks * 2
     ct_data_ref = ct_ref[ct_data_offset:]
 
     scores = []
@@ -338,24 +339,24 @@ def test_regression():
     section("T8 — Vecteurs de Régression (reproductibilité)")
     key  = b"RegressionKey2024"
     seed = b"regression-seed-v1"
-
-    # Ces vecteurs sont générés et stockés ici pour vérification future
     cipher = SMCCipher(key, seed)
 
-    vectors = [
-        b"AAAAAAAA",
-        b"01234567",
-        b"\x00\xFF\x00\xFF\x00\xFF\x00\xFF",
-        b"SMCTest!",
+    # Vecteurs déterministes : on fixe l'IV pour contourner le nonce aléatoire.
+    # Générés avec fixed_iv = bytes(range(16)) après chaque refactoring majeur.
+    fixed_iv = bytes(range(16))
+    VECTORS = [
+        (b"AAAAAAAA",                     b")\xbb\xce\x03V_f\xf0"),
+        (b"01234567",                     b".\xb1\x8b\xe5n\xc82\r"),
+        (b"\x00\xFF\x00\xFF\x00\xFF\x00\xFF", b"\x06~\xd5\xd9\xd8\xb9\x19m"),
+        (b"SMCTest!",                     b"\xe3J\xf9\xd9\x14\xdf\x8d\xd9"),
     ]
 
     all_ok = True
-    for msg in vectors:
-        ct  = cipher.encrypt(msg)
-        pt  = cipher.decrypt(ct)
-        ok  = (pt == msg)
-        h   = hashlib.sha1(ct).hexdigest()[:8]
-        all_ok &= result(f"Vecteur {msg.hex()[:16]}", ok, f"ct_hash={h}")
+    for plaintext, expected_ct in VECTORS:
+        ct, _ = cipher._encrypt_block(plaintext, 0, fixed_iv)
+        ok = ct == expected_ct
+        all_ok &= result(f"Vecteur {plaintext.hex()}", ok,
+                         f"attendu={expected_ct.hex()} obtenu={ct.hex()}")
 
     return all_ok
 

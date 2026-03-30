@@ -2,7 +2,7 @@
 =============================================================================
 Proteus-SMC — engine/prng.py
 =============================================================================
-Moteur de synchronisation déterministe : PRNG XorShift128+
+Moteur de synchronisation déterministe : xoroshiro128+
 Période : 2^128 − 1.  Synchronisé entre émetteur et récepteur via graine.
 =============================================================================
 """
@@ -13,15 +13,16 @@ import struct
 
 class DeterministicPRNG:
     """
-    PRNG XorShift128+ initialisé par une graine dérivée via PBKDF2-SHA256.
-    Période : 2^128 - 1.  Synchronisé entre émetteur et récepteur.
+    PRNG xoroshiro128+ initialisé par une graine dérivée via PBKDF2-SHA256.
+    État : 2 × uint64 → période 2^128 - 1.
+    Synchronisé entre émetteur et récepteur via la même graine.
     """
 
     def __init__(self, seed: bytes, session_id: bytes = b""):
         material = hashlib.pbkdf2_hmac(
-            'sha256', seed, session_id + b"smc-prng", iterations=100, dklen=32
+            'sha256', seed, session_id + b"smc-prng", iterations=100, dklen=16
         )
-        s = list(struct.unpack(">4Q", material))
+        s = list(struct.unpack(">2Q", material))
         self._s = [x if x != 0 else 0xDEADBEEFCAFEBABE for x in s]
 
     def next_u64(self) -> int:

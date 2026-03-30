@@ -6,6 +6,7 @@ Bibliothèque de "gènes" mathématiques : 9 primitives bijectives.
 =============================================================================
 """
 
+import functools
 import hashlib
 import struct
 from typing import Callable, List, Tuple
@@ -38,8 +39,12 @@ def _bit_swap(b: int, k: int) -> int:
         b = int(f"{b:08b}"[::-1], 2)
     return b & 0xFF
 
+@functools.lru_cache(maxsize=256)
+def _sbox_lookup(k: int) -> bytes:
+    return hashlib.md5(struct.pack("B", k)).digest()
+
 def _sbox(b: int, k: int) -> int:
-    m = hashlib.md5(struct.pack("B", k)).digest()
+    m = _sbox_lookup(k)
     return (m[b & 0x0F] ^ m[(b >> 4) & 0x0F] ^ k) & 0xFF
 
 def _fmix(b: int, k: int) -> int:

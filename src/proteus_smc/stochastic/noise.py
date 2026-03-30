@@ -14,8 +14,8 @@ def _noise_fadd(b: int, k: int) -> int:
     return ((b + k) - k) & 0xFF
 
 def _noise_frot(b: int, k: int) -> int:
-    r = k & 7
-    return b if r == 0 else (((b << r) | (b >> (8 - r))) >> r | ((b << r) | (b >> (8 - r))) << (8 - r)) & 0xFF
+    # Rotation gauche puis droite de r bits — résultat toujours identique à b. Neutre.
+    return b
 
 def _noise_dxor(b: int, k: int) -> int:
     return b ^ k ^ k   # identité

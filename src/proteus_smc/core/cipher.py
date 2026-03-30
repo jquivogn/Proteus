@@ -7,6 +7,7 @@ Implémentation du réseau de Feistel et gestion des cycles de mutation.
 """
 
 import hashlib
+import hmac
 import secrets
 import struct
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ class SMCCipher:
     Interface principale du Stochastic Metamorphic Cipher.
 
     Format ciphertext :
-      [ b"SMC" (3) | version (1) | n_blocks (4) | checksum (4) |
+      [ b"SMC" (3) | version (1) | n_blocks (4) | mac (16) |
         IV (16) | round_meta (2×n_blocks) | blocs chiffrés ]
     """
 
@@ -86,7 +87,7 @@ class SMCCipher:
                 # Bruit temporel — neutre sur la valeur
                 if prng.bernoulli(cfg.noise_prob):
                     _, nfn = NOISE_OPS[prng.choice(N_NOISE)]
-                    v = nfn(v, k)   # idempotent
+                    v = nfn(v, k)   # neutre (identité)
                 v = fn(v, k)
 
             out[i] = v
@@ -206,12 +207,12 @@ class SMCCipher:
             ct_blocks.append(ct)
             round_counts.append(nr)
 
-        ct_data   = b"".join(ct_blocks)
-        rnd_meta  = b"".join(struct.pack(">H", r) for r in round_counts)
-        header    = self.MAGIC + bytes([self.VERSION]) + struct.pack(">I", n_blks)
-        checksum  = hashlib.sha256(self._mk + header + iv + rnd_meta + ct_data).digest()[:4]
+        ct_data  = b"".join(ct_blocks)
+        rnd_meta = b"".join(struct.pack(">H", r) for r in round_counts)
+        header   = self.MAGIC + bytes([self.VERSION]) + struct.pack(">I", n_blks)
+        mac      = hmac.new(self._mk, header + iv + rnd_meta + ct_data, 'sha256').digest()[:16]
 
-        return header + checksum + iv + rnd_meta + ct_data
+        return header + mac + iv + rnd_meta + ct_data
 
     def decrypt(self, ciphertext: bytes) -> bytes:
         pos = 0
@@ -224,8 +225,8 @@ class SMCCipher:
         pos += 1
         n_blks = struct.unpack(">I", ciphertext[pos:pos+4])[0]
         pos += 4
-        checksum = ciphertext[pos:pos+4]
-        pos += 4
+        stored_mac = ciphertext[pos:pos+16]
+        pos += 16
         iv = ciphertext[pos:pos+16]
         pos += 16
         rnd_meta = ciphertext[pos:pos+n_blks*2]
@@ -233,11 +234,11 @@ class SMCCipher:
         pos += n_blks * 2
         ct_data = ciphertext[pos:]
 
-        # Vérification intégrité
-        header = ciphertext[:8]
-        exp_cs = hashlib.sha256(self._mk + header + iv + rnd_meta + ct_data).digest()[:4]
-        if exp_cs != checksum:
-            raise ValueError("Checksum invalide — clé incorrecte ou données corrompues")
+        # Vérification intégrité — comparaison en temps constant
+        header  = ciphertext[:8]
+        exp_mac = hmac.new(self._mk, header + iv + rnd_meta + ct_data, 'sha256').digest()[:16]
+        if not hmac.compare_digest(exp_mac, stored_mac):
+            raise ValueError("MAC invalide — clé incorrecte ou données corrompues")
 
         pt_blocks = []
         for i in range(n_blks):
