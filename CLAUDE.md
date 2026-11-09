@@ -14,7 +14,7 @@ pip install -e .
 # Install with the client optional extra (adds cryptography>=41.0 for ECDH)
 pip install -e ".[client]"
 
-# Run all tests — works without installing; smc_tests.py manages sys.path itself
+# Run all tests: works without installing; smc_tests.py manages sys.path itself
 python3 smc_tests.py
 
 # Run the encrypted chat client (requires [client] extra)
@@ -29,7 +29,7 @@ Core library: stdlib only. Client: requires `cryptography>=41.0` for X25519.
 
 ## Project
 
-**Proteus-SMC** (Stochastic Metamorphic Cipher) is a cryptography research project targeting a paper on *"Stochastic Metamorphism in Feistel Networks: Enhancing Side-Channel Resistance through Algorithmic Mutation."* The cipher mutates its own mathematical structure per session using a shared seed, without exchanging code — applying Moving Target Defense (MTD) at the cipher layer.
+**Proteus-SMC** (Stochastic Metamorphic Cipher) is a cryptography research project targeting a paper on *"Stochastic Metamorphism in Feistel Networks: Enhancing Side-Channel Resistance through Algorithmic Mutation."* The cipher mutates its own mathematical structure per session using a shared seed, without exchanging code, applying Moving Target Defense (MTD) at the cipher layer.
 
 ## Architecture
 
@@ -52,20 +52,20 @@ proposition.md    handshake protocol design (PSK + ECDH variants)
 
 ### `core/cipher.py`
 
-**`engine/prng.py` → `DeterministicPRNG`** — XorShift128+ PRNG seeded via `PBKDF2-SHA256(seed, session_id + b"smc-prng", iter=100)`. This is the synchronization engine: same seed → same sequence on both sender and receiver.
+**`engine/prng.py` → `DeterministicPRNG`**: XorShift128+ PRNG seeded via `PBKDF2-SHA256(seed, session_id + b"smc-prng", iter=100)`. This is the synchronization engine: same seed → same sequence on both sender and receiver.
 
-**`primitives/library.py`** — 9 byte-level bijective operations (`PRIMITIVES` list): XOR, ADD, SUB, MUL, ROL, ROR, BSWAP, SBOX, FMIX. Note: SBOX is not guaranteed bijective, but correctness is ensured by the Feistel structure.
+**`primitives/library.py`**: 9 byte-level bijective operations (`PRIMITIVES` list): XOR, ADD, SUB, MUL, ROL, ROR, BSWAP, SBOX, FMIX. Note: SBOX is not guaranteed bijective, but correctness is ensured by the Feistel structure.
 
-**`stochastic/noise.py`** — 4 neutral noise operations (`NOISE_OPS`): FADD, FROT, DXOR, NOOP. Modify execution timing without changing values (Side-Channel resistance layer).
+**`stochastic/noise.py`**: 4 neutral noise operations (`NOISE_OPS`): FADD, FROT, DXOR, NOOP. Modify execution timing without changing values (Side-Channel resistance layer).
 
-**`core/cipher.py` → `SMCConfig`** — Dataclass with cipher parameters: `block_size=8`, `min_rounds=8`, `max_rounds=16`, `noise_prob=0.30`, `prims_per_round=3`.
+**`core/cipher.py` → `SMCConfig`**: Dataclass with cipher parameters: `block_size=8`, `min_rounds=8`, `max_rounds=16`, `noise_prob=0.30`, `prims_per_round=3`.
 
-**`core/cipher.py` → `SMCCipher`** — Stateless per-operation (all state derived from IV + block index), safe to share between concurrent send/receive threads. Key lifecycle:
+**`core/cipher.py` → `SMCCipher`**: Stateless per-operation (all state derived from IV + block index), safe to share between concurrent send/receive threads. Key lifecycle:
 1. Constructor derives a 64-byte master key via `PBKDF2-SHA256(key, seed + b"smc-master", iter=2000)`
 2. `encrypt()`: pads with PKCS#7, generates a random 16-byte IV, encrypts each 8-byte block with `_encrypt_block()`, prepends header (`b"SMC" + version + n_blocks + SHA-256[:4] checksum + IV + round metadata`)
 3. `decrypt()`: verifies checksum first (authenticates with master key), then calls `_decrypt_block()` for each block
 
-**Feistel network** (`_encrypt_block` / `_decrypt_block`): Standard balanced Feistel over 8-byte blocks (L=4B, R=4B). The round function `_F` is stochastic — the PRNG selects and shuffles `prims_per_round` primitives and inserts noise at `noise_prob` probability. Decryption uses `_replay_F_sequence()` to replay the PRNG state exactly, collecting all round sequences before applying inverse rounds in reverse order.
+**Feistel network** (`_encrypt_block` / `_decrypt_block`): Standard balanced Feistel over 8-byte blocks (L=4B, R=4B). The round function `_F` is stochastic: the PRNG selects and shuffles `prims_per_round` primitives and inserts noise at `noise_prob` probability. Decryption uses `_replay_F_sequence()` to replay the PRNG state exactly, collecting all round sequences before applying inverse rounds in reverse order.
 
 ### `smc_tests.py`
 
@@ -84,13 +84,13 @@ Offset   Size    Content
 28+2N    N×8     Encrypted blocks
 ```
 
-### `client/` — Chat application
+### `client/`: Chat application
 
-**`handshake.py`** — Implements the ECDH (X25519) handshake from `proposition.md` (Variante B). Three message types over a length-prefixed TCP framing: `HELLO` (65B), `HELLO_ACK` (65B), `ACK_CONFIRM` (17B). Returns `(session_key: bytes, session_seed: bytes, fingerprint: str)`. Both sides display the same 16-hex-char fingerprint derived from `SHA256(session_seed)` as a visual integrity check.
+**`handshake.py`**: Implements the ECDH (X25519) handshake from `proposition.md` (Variante B). Three message types over a length-prefixed TCP framing: `HELLO` (65B), `HELLO_ACK` (65B), `ACK_CONFIRM` (17B). Returns `(session_key: bytes, session_seed: bytes, fingerprint: str)`. Both sides display the same 16-hex-char fingerprint derived from `SHA256(session_seed)` as a visual integrity check.
 
-**`chat.py`** — CLI with two subcommands (`listen`, `connect`). After handshake, wraps the socket with `SMCCipher` and runs a receive thread + main-thread input loop. Encrypted messages are length-prefixed ciphertexts on the wire. `SMCCipher` is shared between threads safely (stateless per operation).
+**`chat.py`**: CLI with two subcommands (`listen`, `connect`). After handshake, wraps the socket with `SMCCipher` and runs a receive thread + main-thread input loop. Encrypted messages are length-prefixed ciphertexts on the wire. `SMCCipher` is shared between threads safely (stateless per operation).
 
 ## Known limitations (POC v1)
 
-- PBKDF2 is re-derived per block, making encryption O(N×2000) — not production-suitable
+- PBKDF2 is re-derived per block, making encryption O(N×2000), not production-suitable
 - No external cryptographic audit has been performed; for research use only
